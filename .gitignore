@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+dist/
+build/
+*.egg
+*.whl
+
+.idea/
+.vscode/
+*.sublime-workspace
+*.sublime-project
