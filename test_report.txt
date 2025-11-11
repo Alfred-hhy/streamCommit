@@ -1,0 +1,40 @@
+============================= test session starts ==============================
+platform linux -- Python 3.11.9, pytest-8.4.2, pluggy-1.6.0 -- /home/alfred/.pyenv/versions/3.11.9/bin/python
+cachedir: .pytest_cache
+benchmark: 5.1.0 (defaults: timer=time.perf_counter disable_gc=False min_rounds=5 min_time=0.000005 max_time=1.0 calibration_precision=10 warmup=False warmup_iterations=100000)
+hypothesis profile 'default'
+rootdir: /home/alfred/files/stream/try1028
+plugins: benchmark-5.1.0, hypothesis-6.140.3, asyncio-1.2.0, anyio-4.11.0, cov-4.1.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 28 items
+
+tests/test_formulas.py::test_eq_1_positive PASSED                        [  3%]
+tests/test_formulas.py::test_eq_1_negative_wrong_message PASSED          [  7%]
+tests/test_formulas.py::test_eq_1_negative_wrong_proof PASSED            [ 10%]
+tests/test_formulas.py::test_eq_3_positive PASSED                        [ 14%]
+tests/test_formulas.py::test_eq_3_negative_wrong_gamma PASSED            [ 17%]
+tests/test_formulas.py::test_eq_4_positive PASSED                        [ 21%]
+tests/test_formulas.py::test_eq_4_negative_wrong_vector PASSED           [ 25%]
+tests/test_formulas.py::test_eq_5_positive PASSED                        [ 28%]
+tests/test_formulas.py::test_eq_5_negative_wrong_proof PASSED            [ 32%]
+tests/test_formulas.py::test_eq_7_positive_binary PASSED                 [ 35%]
+tests/test_formulas.py::test_eq_7_negative_wrong_proof PASSED            [ 39%]
+tests/test_formulas.py::test_eq_9_positive PASSED                        [ 42%]
+tests/test_formulas.py::test_eq_9_negative_wrong_scalar PASSED           [ 46%]
+tests/test_formulas.py::test_eq_16_positive PASSED                       [ 50%]
+tests/test_formulas.py::test_eq_16_negative_wrong_aggregation PASSED     [ 53%]
+tests/test_formulas.py::test_eq_20_positive PASSED                       [ 57%]
+tests/test_formulas.py::test_eq_20_negative_wrong_challenges PASSED      [ 60%]
+tests/test_multidim_vds.py::TestMultiDimVDS::test_single_column PASSED   [ 64%]
+tests/test_multidim_vds.py::TestMultiDimVDS::test_multi_column_dc PASSED [ 67%]
+tests/test_multidim_vds.py::TestMultiDimVDS::test_multi_column_da PASSED [ 71%]
+tests/test_multidim_vds.py::TestMultiDimVDS::test_shared_signature PASSED [ 75%]
+tests/test_multidim_vds.py::TestMultiDimVDS::test_column_index_out_of_range PASSED [ 78%]
+tests/test_vds_scheme_c_plus.py::TestVDSSchemeC::test_1_happy_path_dc PASSED [ 82%]
+tests/test_vds_scheme_c_plus.py::TestVDSSchemeC::test_2_happy_path_da PASSED [ 85%]
+tests/test_vds_scheme_c_plus.py::TestVDSSchemeC::test_3_rollback_attack PASSED [ 89%]
+tests/test_vds_scheme_c_plus.py::TestVDSSchemeC::test_4_binding_failure PASSED [ 92%]
+tests/test_vds_scheme_c_plus.py::TestVDSSchemeC::test_5_tamper_failure PASSED [ 96%]
+tests/test_vds_scheme_c_plus.py::TestVDSSchemeC::test_6_time_proofs PASSED [100%]
+
+============================== 28 passed in 2.55s ==============================

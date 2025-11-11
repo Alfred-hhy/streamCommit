@@ -101,85 +101,97 @@ class DataOwner:
             "f_current": self.current_f     # Dynamic: current blacklist state
         }
     
-    def create_batch(self, m_vector: List[ZR], t_vector: List[ZR]) -> Tuple[str, Dict, Dict]:
+    def create_batch(self, m_matrix: List[List[ZR]], t_vector: List[ZR]) -> Tuple[str, Dict, Dict]:
         """
-        Create and sign a new batch.
-        
+        创建并签名新批次（支持多维数据）。
+
         Parameters
         ----------
-        m_vector : List[ZR]
-            The data vector (length n)
+        m_matrix : List[List[ZR]] 或 List[ZR]
+            数据矩阵（多列）或数据向量（单列，向后兼容）
+            - 多列格式：[[temp_t1, temp_t2, ...], [humid_t1, humid_t2, ...]]
+            - 单列格式：[data_t1, data_t2, ...]（自动转换为 [[data_t1, data_t2, ...]]）
         t_vector : List[ZR]
-            The time vector (length n)
-        
+            时间向量（所有列共享）
+
         Returns
         -------
         batch_id : str
-            A unique identifier for this batch
+            批次唯一标识符
         public_header : dict
-            Public information for verifiers:
-            - C_data: Data commitment (G1)
-            - C_time: Time commitment (G2)
-            - sigma: Binding signature
+            公开信息：
+            - C_data_list: 数据承诺列表（每列一个）
+            - C_time: 时间承诺
+            - sigma: 绑定签名
         secrets_for_ss : dict
-            Secret information for SS (to generate proofs):
-            - m: Data vector
-            - t: Time vector
-            - gamma_data: Randomness for C_data
-            - gamma_time: Randomness for C_time
-        
+            秘密信息：
+            - m_matrix: 数据矩阵
+            - t: 时间向量
+            - gamma_data_list: 每列的随机数列表
+            - gamma_time: 时间承诺的随机数
+
         Notes
         -----
-        Workflow:
-        1. Generate random blinding factors (gamma_data, gamma_time)
-        2. Compute commitments: C_data = commit_G(m, gamma_data)
-                               C_time = commit_Ghat(t, gamma_time)
-        3. Sign the commitments: sigma = Sign(sk_DO, Hash(C_data || C_time))
-        4. Prepare public header and secrets
-        5. Return everything for SS to store
-        
-        Security:
-        - The signature binds C_data and C_time together
-        - Any tampering will be detected during verification
-        - Secrets are only given to SS (trusted for storage)
+        多列共享同一个 C_time 和同一个签名 σ，降低存储和验证开销。
+        向后兼容：如果传入单个向量，自动转换为单列矩阵。
         """
         n = self.crs['n']
-        
-        # Validate input lengths
-        if len(m_vector) != n or len(t_vector) != n:
-            raise ValueError(f"Vectors must have length n={n}")
-        
-        # Generate random blinding factors
-        gamma_data = self.group.random(ZR)
+
+        # 验证输入
+        if len(t_vector) != n:
+            raise ValueError(f"Time vector must have length n={n}")
+
+        # 向后兼容：检测是否为单个向量（而非矩阵）
+        # 如果第一个元素不是列表，则认为是单列向量
+        if len(m_matrix) > 0 and not isinstance(m_matrix[0], list):
+            # 单列向量格式，转换为矩阵格式
+            if len(m_matrix) != n:
+                raise ValueError(f"Data vector must have length n={n}")
+            m_matrix = [m_matrix]  # 转换为单列矩阵
+
+        # 验证矩阵格式
+        if len(m_matrix) == 0:
+            raise ValueError("m_matrix must contain at least one column")
+        for col_idx, m_col in enumerate(m_matrix):
+            if len(m_col) != n:
+                raise ValueError(f"Column {col_idx} must have length n={n}")
+
+        # 生成时间承诺（所有列共享）
         gamma_time = self.group.random(ZR)
-        
-        # Compute commitments
-        C_data = commit_G(m_vector, gamma_data, self.crs)      # In G1
         C_time = commit_Ghat(t_vector, gamma_time, self.crs)  # In G2
-        
-        # Sign the commitments (binding)
-        sigma = vds_utils.sign_batch(self.sk_DO, C_data, C_time)
-        
-        # Generate batch ID (simple hash of commitments)
+
+        # 为每一列生成数据承诺
+        C_data_list = []
+        gamma_data_list = []
+        for m_col in m_matrix:
+            gamma_data = self.group.random(ZR)
+            C_data = commit_G(m_col, gamma_data, self.crs)  # In G1
+            C_data_list.append(C_data)
+            gamma_data_list.append(gamma_data)
+
+        # 签名绑定所有承诺
+        sigma = vds_utils.sign_batch(self.sk_DO, C_data_list, C_time)
+
+        # 生成批次 ID
         import hashlib
-        batch_id_bytes = vds_utils.hash_for_signing(C_data, C_time)
+        batch_id_bytes = vds_utils.hash_for_signing(C_data_list, C_time)
         batch_id = hashlib.sha256(batch_id_bytes).hexdigest()[:16]
-        
-        # Prepare public header (for verifiers)
+
+        # 准备公开头部
         public_header = {
-            "C_data": C_data,
+            "C_data_list": C_data_list,
             "C_time": C_time,
             "sigma": sigma
         }
-        
-        # Prepare secrets (for SS to generate proofs)
+
+        # 准备秘密数据
         secrets_for_ss = {
-            "m": m_vector,
+            "m_matrix": m_matrix,
             "t": t_vector,
-            "gamma_data": gamma_data,
+            "gamma_data_list": gamma_data_list,
             "gamma_time": gamma_time
         }
-        
+
         return batch_id, public_header, secrets_for_ss
     
     def revoke_batch(self, sigma_to_revoke: bytes) -> Tuple[G1, Dict, bytes]:

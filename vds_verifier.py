@@ -88,244 +88,226 @@ class Verifier:
         """
         self.current_global_pk = new_global_pk
     
-    def _verify_precheck(self, public_header: Dict, pi_non: Tuple) -> Tuple[bool, G1]:
+    def _verify_precheck(self, public_header: Dict, pi_non: Tuple) -> Tuple[bool, List[G1]]:
         """
-        Perform pre-verification checks (signature + blacklist).
-        
+        执行预验证检查（签名 + 黑名单）。
+
         Parameters
         ----------
         public_header : dict
-            The public header (C_data, C_time, sigma)
+            公开头部（C_data_list, C_time, sigma）
         pi_non : Tuple[G1, ZR]
-            The accumulator non-membership proof
-        
+            累加器非成员证明
+
         Returns
         -------
         is_valid : bool
-            True if precheck passes, False otherwise
-        C_data : G1
-            The data commitment (for subsequent verification)
-        
+            预检查通过返回 True
+        C_data_list : List[G1]
+            数据承诺列表（用于后续验证）
+
         Notes
         -----
-        This is the CRITICAL security check that:
-        1. Verifies the signature binding (prevents mix-and-match)
-        2. Verifies non-membership in blacklist (prevents rollback)
-        
-        If either check fails, the entire verification fails.
+        关键安全检查：
+        1. 验证签名绑定（防止混合攻击）
+        2. 验证非黑名单成员（防止回滚攻击）
         """
         try:
-            # Extract current global_pk components
+            # 提取全局公钥组件
             vk_sig = self.current_global_pk["vk_sig"]
             acc_pk = self.current_global_pk["acc_pk"]
             f_current = self.current_global_pk["f_current"]
-            
-            # Extract public header components
-            C_data = public_header["C_data"]
+
+            # 提取公开头部组件
+            C_data_list = public_header["C_data_list"]
             C_time = public_header["C_time"]
             sigma = public_header["sigma"]
-            
-            # Check 1: Verify signature binding
-            if not vds_utils.verify_batch_signature(vk_sig, C_data, C_time, sigma):
-                print("❌ Verification failed: Invalid signature binding.")
-                print("   This indicates tampering or mix-and-match attack.")
+
+            # 检查 1：验证签名绑定
+            if not vds_utils.verify_batch_signature(vk_sig, C_data_list, C_time, sigma):
+                print("❌ 验证失败：签名绑定无效")
+                print("   可能存在篡改或混合攻击")
                 return False, None
-            
-            # Check 2: Verify non-membership in blacklist
+
+            # 检查 2：验证非黑名单成员
             sigma_bytes = vds_utils.serialize_signature(sigma)
             if not self.accumulator.verify_non_membership(acc_pk, f_current, sigma_bytes, pi_non):
-                print("❌ Verification failed: Item is in revocation list (blacklist).")
-                print("   This batch has been revoked by DO.")
+                print("❌ 验证失败：批次已被撤销")
                 return False, None
-            
-            # Both checks passed
-            return True, C_data
-            
+
+            # 两项检查都通过
+            return True, C_data_list
+
         except Exception as e:
-            print(f"❌ Precheck error: {e}")
+            print(f"❌ 预检查错误: {e}")
             import traceback
             traceback.print_exc()
             return False, None
     
-    def verify_dc_query(self, public_header: Dict, t_challenge_vector: List[ZR], 
-                       x_result: ZR, pi_audit: G1, pi_non: Tuple) -> bool:
+    def verify_dc_query(self, public_header: Dict, t_challenge_vector: List[ZR],
+                       x_result: ZR, pi_audit: G1, pi_non: Tuple, column_index: int = 0) -> bool:
         """
-        Verify a Data Consumer (DC) query.
-        
+        验证 DC 查询（支持多列）。
+
         Parameters
         ----------
         public_header : dict
-            The public header (C_data, C_time, sigma)
+            公开头部（C_data_list, C_time, sigma）
         t_challenge_vector : List[ZR]
-            The challenge weights (provided by DC)
+            DC 提供的挑战权重
         x_result : ZR
-            The claimed result ∑ m_i * t_i
+            声称的结果 ∑ m_i * t_i
         pi_audit : G1
-            The VC proof (aggregated opening)
+            VC 证明
         pi_non : Tuple[G1, ZR]
-            The accumulator non-membership proof
-        
+            累加器非成员证明
+        column_index : int
+            目标列索引（默认为 0）
+
         Returns
         -------
         bool
-            True if verification passes, False otherwise
-        
+            验证通过返回 True
+
         Notes
         -----
-        DC Workflow:
-        1. DC sends t_challenge to SS
-        2. SS returns (x_result, pi_audit, pi_non)
-        3. DC verifies using this function
-        
-        Verification steps:
-        1. Precheck: signature + blacklist
-        2. VC verification: Libert 2024 Equation 1
+        验证步骤：
+        1. 预检查：签名 + 黑名单
+        2. VC 验证：使用目标列的承诺
         """
-        # Step 1 & 2: Verify signature and blacklist
-        is_valid_precheck, C_data = self._verify_precheck(public_header, pi_non)
+        # 步骤 1 & 2：验证签名和黑名单
+        is_valid_precheck, C_data_list = self._verify_precheck(public_header, pi_non)
         if not is_valid_precheck:
             return False
-        
-        # Step 3: Verify VC proof (Libert 2024 Equation 1)
-        # verify_1(C, pis, t, m, crs) checks:
-        # e(C, ∏ ĝ_{n+1-i}^{t_i}) = e(∏ π_i^{t_i}, ĝ) · e(g_1, ĝ_n)^{∑ m_i t_i}
-        
-        # We have the aggregated proof pi_audit = ∏ π_i^{t_i}
-        # We need to pass it as a list [pi_audit] and the result as [x_result]
-        
-        # Note: verify_1 expects pis as a list of individual proofs
-        # But we have the aggregated proof, so we need to use a different approach
-        
-        # Actually, looking at verify_1 signature:
-        # verify_1(C: G1, pis: List[G1], t: List[ZR], m: List[ZR], crs: dict)
-        # It expects the full list of individual proofs and the full message vector
-        
-        # But we don't have the message vector m! That's the point of the proof.
-        # We only have x_result = ∑ m_i * t_i
-        
-        # Let me check the verify_1 implementation again...
-        # From the code: it computes ∑ m_i * t_i and uses it in the pairing
-        
-        # So we need a different verification approach.
-        # We should use the aggregated verification directly.
-        
-        # The correct verification for aggregated opening is:
+
+        # 验证列索引
+        if column_index < 0 or column_index >= len(C_data_list):
+            print(f"❌ 列索引 {column_index} 超出范围 [0, {len(C_data_list)})")
+            return False
+
+        # 提取目标列的承诺
+        C_data = C_data_list[column_index]
+
+        # 步骤 3：验证 VC 证明
         # e(C, ∏ ĝ_{n+1-i}^{t_i}) = e(pi_audit, ĝ) · e(g_1, ĝ_n)^{x_result}
-        
-        # Let's implement this directly
         n = self.crs['n']
         g_hat = self.crs['g_hat']
         g_hat_list = self.crs['g_hat_list']
         g_list = self.crs['g_list']
-        
-        # Compute LHS: e(C, ∏ ĝ_{n+1-i}^{t_i})
+
+        # 计算 LHS: e(C, ∏ ĝ_{n+1-i}^{t_i})
         g_hat_prod = self.group.init(G2, 1)
         for i in range(1, n + 1):
             idx = n + 1 - i
             if idx in g_hat_list:
                 g_hat_prod *= g_hat_list[idx] ** t_challenge_vector[i - 1]
-        
+
         lhs = self.group.pair_prod(C_data, g_hat_prod)
-        
-        # Compute RHS: e(pi_audit, ĝ) · e(g_1, ĝ_n)^{x_result}
+
+        # 计算 RHS: e(pi_audit, ĝ) · e(g_1, ĝ_n)^{x_result}
         rhs_1 = self.group.pair_prod(pi_audit, g_hat)
         rhs_2 = self.group.pair_prod(g_list[1], g_hat_list[n]) ** x_result
         rhs = rhs_1 * rhs_2
-        
-        # Check equality
+
+        # 检查等式
         is_vc_valid = (lhs == rhs)
-        
+
         if not is_vc_valid:
-            print("❌ VC verification failed: Proof does not match commitment.")
-            print("   This indicates tampering with data or incorrect proof.")
-        
+            print("❌ VC 验证失败：证明与承诺不匹配")
+            print("   可能存在数据篡改或证明错误")
+
         return is_vc_valid
     
-    def verify_da_audit(self, public_header: Dict, n: int, x_result_random: ZR, 
-                       pi_audit_zk: G1, t_challenge_zk_provided: List[ZR], 
-                       pi_non: Tuple) -> bool:
+    def verify_da_audit(self, public_header: Dict, n: int, x_result_random: ZR,
+                       pi_audit_zk: G1, t_challenge_zk_provided: List[ZR],
+                       pi_non: Tuple, column_index: int = 0) -> bool:
         """
-        Verify a Data Auditor (DA) audit.
-        
+        验证 DA 审计（支持多列）。
+
         Parameters
         ----------
         public_header : dict
-            The public header (C_data, C_time, sigma)
+            公开头部（C_data_list, C_time, sigma）
         n : int
-            The vector dimension
+            向量维度
         x_result_random : ZR
-            The claimed result with random challenge
+            使用随机挑战的声称结果
         pi_audit_zk : G1
-            The VC proof (aggregated opening)
+            VC 证明
         t_challenge_zk_provided : List[ZR]
-            The Fiat-Shamir challenge (from SS)
+            SS 提供的 Fiat-Shamir 挑战
         pi_non : Tuple[G1, ZR]
-            The accumulator non-membership proof
-        
+            累加器非成员证明
+        column_index : int
+            目标列索引（默认为 0）
+
         Returns
         -------
         bool
-            True if verification passes, False otherwise
-        
+            验证通过返回 True
+
         Notes
         -----
-        DA Workflow:
-        1. DA requests audit from SS
-        2. SS returns (x_result_random, pi_audit_zk, t_challenge_zk, pi_non)
-        3. DA verifies using this function
-        
-        Verification steps:
-        1. Precheck: signature + blacklist
-        2. Recompute Fiat-Shamir challenge (ensure SS didn't cheat)
-        3. VC verification: Libert 2024 Equation 1
+        验证步骤：
+        1. 预检查：签名 + 黑名单
+        2. 重新计算 Fiat-Shamir 挑战（确保 SS 未作弊）
+        3. VC 验证
         """
-        # Step 1 & 2: Verify signature and blacklist
-        is_valid_precheck, C_data = self._verify_precheck(public_header, pi_non)
+        # 步骤 1 & 2：验证签名和黑名单
+        is_valid_precheck, C_data_list = self._verify_precheck(public_header, pi_non)
         if not is_valid_precheck:
             return False
-        
-        # Step 3: Recompute Fiat-Shamir challenge
+
+        # 验证列索引
+        if column_index < 0 or column_index >= len(C_data_list):
+            print(f"❌ 列索引 {column_index} 超出范围 [0, {len(C_data_list)})")
+            return False
+
+        # 提取目标列的承诺
+        C_data = C_data_list[column_index]
+
+        # 步骤 3：重新计算 Fiat-Shamir 挑战
         C_hat_dummy = self.group.init(G2, 1)
         C_y_dummy = self.group.init(G1, 1)
         t_challenge_zk_local = H_t(C_data, C_hat_dummy, C_y_dummy, n, self.group, b"VDS-DA-AUDIT-ZK")
-        
-        # Check challenge consistency
+
+        # 检查挑战一致性
         if len(t_challenge_zk_local) != len(t_challenge_zk_provided):
-            print("❌ Verification failed: Challenge length mismatch.")
+            print("❌ 验证失败：挑战长度不匹配")
             return False
-        
+
         for i, (t_local, t_provided) in enumerate(zip(t_challenge_zk_local, t_challenge_zk_provided)):
             if t_local != t_provided:
-                print(f"❌ Verification failed: ZK Challenge mismatch at position {i}.")
-                print("   This indicates SS tried to use a different challenge.")
+                print(f"❌ 验证失败：ZK 挑战在位置 {i} 不匹配")
+                print("   SS 可能尝试使用不同的挑战")
                 return False
-        
-        # Step 4: Verify VC proof (same as DC, but with ZK challenge)
+
+        # 步骤 4：验证 VC 证明
         g_hat = self.crs['g_hat']
         g_hat_list = self.crs['g_hat_list']
         g_list = self.crs['g_list']
-        
-        # Compute LHS: e(C, ∏ ĝ_{n+1-i}^{t_i})
+
+        # 计算 LHS: e(C, ∏ ĝ_{n+1-i}^{t_i})
         g_hat_prod = self.group.init(G2, 1)
         for i in range(1, n + 1):
             idx = n + 1 - i
             if idx in g_hat_list:
                 g_hat_prod *= g_hat_list[idx] ** t_challenge_zk_local[i - 1]
-        
+
         lhs = self.group.pair_prod(C_data, g_hat_prod)
-        
-        # Compute RHS: e(pi_audit_zk, ĝ) · e(g_1, ĝ_n)^{x_result_random}
+
+        # 计算 RHS: e(pi_audit_zk, ĝ) · e(g_1, ĝ_n)^{x_result_random}
         rhs_1 = self.group.pair_prod(pi_audit_zk, g_hat)
         rhs_2 = self.group.pair_prod(g_list[1], g_hat_list[n]) ** x_result_random
         rhs = rhs_1 * rhs_2
-        
-        # Check equality
+
+        # 检查等式
         is_vc_valid = (lhs == rhs)
-        
+
         if not is_vc_valid:
-            print("❌ VC verification failed: Proof does not match commitment.")
-            print("   This indicates tampering with data or incorrect proof.")
-        
+            print("❌ VC 验证失败：证明与承诺不匹配")
+            print("   可能存在数据篡改或证明错误")
+
         return is_vc_valid
 
     def verify_time_range_proof(self, public_header: Dict, proof_data: Dict,

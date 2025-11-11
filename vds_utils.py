@@ -22,7 +22,7 @@ from ecdsa import SigningKey, VerifyingKey, NIST256p
 from ecdsa.util import sigdecode_string, sigencode_string
 from charm.core.engine.util import objectToBytes
 from charm.toolbox.pairinggroup import G1, G2
-from typing import Tuple
+from typing import Tuple, List
 
 
 def generate_signing_keys() -> Tuple[SigningKey, VerifyingKey]:
@@ -84,139 +84,110 @@ def serialize_group_element(elem) -> bytes:
         return str(elem).encode('utf-8')
 
 
-def serialize_for_signing(C_data: G1, C_time: G2) -> bytes:
+def serialize_for_signing(C_data_list: List[G1], C_time: G2) -> bytes:
     """
-    Serialize two commitments for signature binding.
-    
+    序列化承诺列表和时间承诺用于签名绑定。
+
     Parameters
     ----------
-    C_data : G1
-        The data commitment
+    C_data_list : List[G1]
+        数据承诺列表（每列一个承诺）
     C_time : G2
-        The time commitment
-    
+        时间承诺（所有列共享）
+
     Returns
     -------
     bytes
-        Concatenated serialization of both commitments
-    
+        拼接后的序列化字节：C_time || C_data[0] || C_data[1] || ...
+
     Notes
     -----
-    The order matters: C_data || C_time
-    This ensures a unique representation for each (C_data, C_time) pair.
-    
-    Examples
-    --------
-    >>> msg_bytes = serialize_for_signing(C_data, C_time)
+    顺序：先序列化 C_time，再依次序列化每个 C_data
     """
-    C_data_bytes = serialize_group_element(C_data)
     C_time_bytes = serialize_group_element(C_time)
-    return C_data_bytes + C_time_bytes
+    result = C_time_bytes
+    for C_data in C_data_list:
+        result += serialize_group_element(C_data)
+    return result
 
 
-def hash_for_signing(C_data: G1, C_time: G2) -> bytes:
+def hash_for_signing(C_data_list: List[G1], C_time: G2) -> bytes:
     """
-    Hash two commitments for signature generation.
-    
+    哈希承诺列表和时间承诺用于签名生成。
+
     Parameters
     ----------
-    C_data : G1
-        The data commitment
+    C_data_list : List[G1]
+        数据承诺列表
     C_time : G2
-        The time commitment
-    
+        时间承诺
+
     Returns
     -------
     bytes
-        SHA-256 hash of the serialized commitments
-    
+        SHA-256 哈希值
+
     Notes
     -----
-    We use SHA-256 for the hash function.
-    This provides collision resistance for the signature binding.
-    
-    Examples
-    --------
-    >>> h = hash_for_signing(C_data, C_time)
-    >>> sigma = sk.sign(h)
+    使用 SHA-256 提供抗碰撞性。
     """
-    serialized = serialize_for_signing(C_data, C_time)
+    serialized = serialize_for_signing(C_data_list, C_time)
     return hashlib.sha256(serialized).digest()
 
 
-def sign_batch(sk_ecdsa: SigningKey, C_data: G1, C_time: G2) -> bytes:
+def sign_batch(sk_ecdsa: SigningKey, C_data_list: List[G1], C_time: G2) -> bytes:
     """
-    Sign a batch (bind C_data and C_time together).
-    
+    签名批次（绑定所有数据列承诺和时间承诺）。
+
     Parameters
     ----------
     sk_ecdsa : SigningKey
-        The DO's secret signing key
-    C_data : G1
-        The data commitment
+        DO 的签名密钥
+    C_data_list : List[G1]
+        数据承诺列表
     C_time : G2
-        The time commitment
-    
+        时间承诺
+
     Returns
     -------
     bytes
-        The signature σ = Sign(sk, Hash(C_data || C_time))
-    
+        签名 σ = Sign(sk, Hash(C_time || C_data[0] || C_data[1] || ...))
+
     Notes
     -----
-    This signature cryptographically binds C_data and C_time together.
-    Any attempt to mix commitments from different batches will fail verification.
-    
-    Security:
-    - Prevents mix-and-match attacks
-    - Ensures integrity of the batch header
-    
-    Examples
-    --------
-    >>> sigma = sign_batch(sk_DO, C_data, C_time)
-    >>> # sigma is included in the public header
+    签名绑定所有列的承诺和时间承诺，防止混合攻击。
     """
-    h = hash_for_signing(C_data, C_time)
+    h = hash_for_signing(C_data_list, C_time)
     sigma = sk_ecdsa.sign(h, sigencode=sigencode_string)
     return sigma
 
 
-def verify_batch_signature(vk_ecdsa: VerifyingKey, C_data: G1, C_time: G2, sigma: bytes) -> bool:
+def verify_batch_signature(vk_ecdsa: VerifyingKey, C_data_list: List[G1], C_time: G2, sigma: bytes) -> bool:
     """
-    Verify a batch signature.
-    
+    验证批次签名。
+
     Parameters
     ----------
     vk_ecdsa : VerifyingKey
-        The DO's public verification key
-    C_data : G1
-        The data commitment
+        DO 的验证密钥
+    C_data_list : List[G1]
+        数据承诺列表
     C_time : G2
-        The time commitment
+        时间承诺
     sigma : bytes
-        The signature to verify
-    
+        待验证的签名
+
     Returns
     -------
     bool
-        True if the signature is valid, False otherwise
-    
+        签名有效返回 True，否则返回 False
+
     Notes
     -----
-    This verifies that:
-    1. The signature was created by the DO (using sk_DO)
-    2. The signature binds exactly these two commitments (C_data, C_time)
-    
-    Any tampering with C_data or C_time will cause verification to fail.
-    
-    Examples
-    --------
-    >>> is_valid = verify_batch_signature(vk_DO, C_data, C_time, sigma)
-    >>> if not is_valid:
-    >>>     print("Invalid signature! Possible tampering detected.")
+    验证签名是否绑定了所有承诺，任何篡改都会导致验证失败。
     """
     try:
-        h = hash_for_signing(C_data, C_time)
+        h = hash_for_signing(C_data_list, C_time)
         vk_ecdsa.verify(sigma, h, sigdecode=sigdecode_string)
         return True
     except Exception as e:

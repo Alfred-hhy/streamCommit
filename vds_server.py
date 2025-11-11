@@ -122,77 +122,76 @@ class StorageServer:
         """
         self.storage[batch_id] = (public_header, secrets_for_ss)
     
-    def generate_dc_data_proof(self, batch_id: str, t_challenge_vector: List[ZR], 
-                               f_current: G1) -> Tuple[ZR, G1, Tuple]:
+    def generate_dc_data_proof(self, batch_id: str, t_challenge_vector: List[ZR],
+                               f_current: G1, column_index: int = 0) -> Tuple[ZR, G1, Tuple]:
         """
-        Generate a proof for Data Consumer (DC) - Interactive query.
-        
+        为 DC 生成交互式查询证明（支持多列）。
+
         Parameters
         ----------
         batch_id : str
-            The batch to query
+            批次 ID
         t_challenge_vector : List[ZR]
-            The challenge weights from DC (e.g., [1,1,...,1] for sum)
+            DC 提供的挑战权重
         f_current : G1
-            The current accumulator value (from DO's global_pk)
-        
+            当前累加器值
+        column_index : int
+            目标列索引（默认为 0）
+
         Returns
         -------
         x_result : ZR
-            The scalar result ∑ m_i * t_i
+            标量结果 ∑ m_i * t_i
         pi_audit : G1
-            The VC proof (aggregated opening proof)
+            VC 证明
         pi_non : Tuple[G1, ZR]
-            The accumulator non-membership proof (w, u)
-        
+            累加器非成员证明
+
         Notes
         -----
-        This implements the DC workflow:
-        1. Retrieve batch data
-        2. Compute scalar result x = ∑ m_i * t_i
-        3. Generate VC proof (Libert 2024 Equation 1)
-        4. Generate accumulator non-membership proof
-        
-        Security:
-        - If SS tries to cheat (wrong x or tampered data), verification will fail
-        - If the batch is revoked, accumulator proof will fail
+        从 m_matrix[column_index] 和 gamma_data_list[column_index] 提取数据生成证明。
+        签名 σ 对所有列共享，因此累加器证明不变。
         """
-        # Retrieve batch data
+        # 获取批次数据
         if batch_id not in self.storage:
             raise ValueError(f"Batch {batch_id} not found")
-        
+
         header, secrets = self.storage[batch_id]
-        m = secrets["m"]
-        gamma_data = secrets["gamma_data"]
-        C_data = header["C_data"]
+        m_matrix = secrets["m_matrix"]
+        gamma_data_list = secrets["gamma_data_list"]
+        C_data_list = header["C_data_list"]
         sigma = header["sigma"]
-        
+
+        # 验证列索引
+        if column_index < 0 or column_index >= len(m_matrix):
+            raise ValueError(f"column_index {column_index} out of range [0, {len(m_matrix)})")
+
+        # 提取目标列的数据
+        m = m_matrix[column_index]
+        gamma_data = gamma_data_list[column_index]
+        C_data = C_data_list[column_index]
+
         n = len(m)
         if len(t_challenge_vector) != n:
             raise ValueError(f"Challenge vector length {len(t_challenge_vector)} != n={n}")
-        
-        # Compute scalar result: x = ∑ m_i * t_i
+
+        # 计算标量结果：x = ∑ m_i * t_i
         x_result = self.group.init(ZR, 0)
         for m_i, t_i in zip(m, t_challenge_vector):
             x_result += m_i * t_i
-        
-        # Generate VC proof (Libert 2024 Equation 1)
-        # We need to generate point opening proofs for all positions
-        # Then aggregate them with weights t_challenge_vector
-        
-        # Generate all point opening proofs
+
+        # 生成 VC 证明
         pis = []
         for i in range(1, n + 1):
             pi_i = prove_point_open(C_data, m, gamma_data, i, self.crs)
             pis.append(pi_i)
-        
-        # Aggregate with challenge weights
-        # π_S = ∏ π_i^{t_i}
+
+        # 聚合证明：π_S = ∏ π_i^{t_i}
         pi_audit = self.group.init(G1, 1)
         for pi_i, t_i in zip(pis, t_challenge_vector):
             pi_audit *= pi_i ** t_i
-        
-        # Generate accumulator non-membership proof
+
+        # 生成累加器非成员证明（签名对所有列共享）
         sigma_bytes = vds_utils.serialize_signature(sigma)
         try:
             pi_non = self.accumulator.prove_non_membership(
@@ -200,8 +199,7 @@ class StorageServer:
             )
         except ValueError as e:
             if "in the blacklist" in str(e):
-                # Item is revoked, return a dummy proof that will fail verification
-                # The verifier will detect this and reject the batch
+                # 批次已撤销，返回虚拟证明
                 w_dummy = self.group.init(G1, 1)
                 u_dummy = self.group.init(ZR, 0)
                 pi_non = (w_dummy, u_dummy)
@@ -210,78 +208,76 @@ class StorageServer:
 
         return (x_result, pi_audit, pi_non)
     
-    def generate_da_audit_proof(self, batch_id: str, f_current: G1) -> Tuple[ZR, G1, List[ZR], Tuple]:
+    def generate_da_audit_proof(self, batch_id: str, f_current: G1, column_index: int = 0) -> Tuple[ZR, G1, List[ZR], Tuple]:
         """
-        Generate a proof for Data Auditor (DA) - Non-interactive ZK audit.
-        
+        为 DA 生成非交互式 ZK 审计证明（支持多列）。
+
         Parameters
         ----------
         batch_id : str
-            The batch to audit
+            批次 ID
         f_current : G1
-            The current accumulator value (from DO's global_pk)
-        
+            当前累加器值
+        column_index : int
+            目标列索引（默认为 0）
+
         Returns
         -------
         x_result_random : ZR
-            The scalar result with random challenge
+            使用随机挑战的标量结果
         pi_audit_zk : G1
-            The VC proof (aggregated opening proof)
+            VC 证明
         t_challenge_zk : List[ZR]
-            The Fiat-Shamir challenge (for verifier to check)
+            Fiat-Shamir 挑战
         pi_non : Tuple[G1, ZR]
-            The accumulator non-membership proof (w, u)
-        
+            累加器非成员证明
+
         Notes
         -----
-        This implements the DA workflow (NIZK):
-        1. Retrieve batch data
-        2. Generate Fiat-Shamir challenge t_zk = H(C_data)
-        3. Compute scalar result x = ∑ m_i * t_zk_i
-        4. Generate VC proof
-        5. Generate accumulator non-membership proof
-        
-        Security:
-        - The challenge is deterministic (Fiat-Shamir)
-        - Verifier will recompute the challenge and check consistency
-        - This prevents SS from choosing a favorable challenge
+        使用 Fiat-Shamir 变换生成确定性挑战，防止 SS 选择有利的挑战。
         """
-        # Retrieve batch data
+        # 获取批次数据
         if batch_id not in self.storage:
             raise ValueError(f"Batch {batch_id} not found")
-        
+
         header, secrets = self.storage[batch_id]
-        m = secrets["m"]
-        gamma_data = secrets["gamma_data"]
-        C_data = header["C_data"]
+        m_matrix = secrets["m_matrix"]
+        gamma_data_list = secrets["gamma_data_list"]
+        C_data_list = header["C_data_list"]
         sigma = header["sigma"]
+
+        # 验证列索引
+        if column_index < 0 or column_index >= len(m_matrix):
+            raise ValueError(f"column_index {column_index} out of range [0, {len(m_matrix)})")
+
+        # 提取目标列的数据
+        m = m_matrix[column_index]
+        gamma_data = gamma_data_list[column_index]
+        C_data = C_data_list[column_index]
         n = len(m)
-        
-        # Generate Fiat-Shamir challenge
-        # We use a custom domain separator for DA audit
-        # Note: H_t expects (C, C_hat, C_y, n, group, ctx_bytes)
-        # For DA audit, we only have C_data, so we use dummy values for C_hat and C_y
+
+        # 生成 Fiat-Shamir 挑战
         C_hat_dummy = self.group.init(G2, 1)
         C_y_dummy = self.group.init(G1, 1)
         t_challenge_zk = H_t(C_data, C_hat_dummy, C_y_dummy, n, self.group, b"VDS-DA-AUDIT-ZK")
-        
-        # Compute scalar result: x = ∑ m_i * t_zk_i
+
+        # 计算标量结果：x = ∑ m_i * t_zk_i
         x_result_random = self.group.init(ZR, 0)
         for m_i, t_i in zip(m, t_challenge_zk):
             x_result_random += m_i * t_i
-        
-        # Generate VC proof
+
+        # 生成 VC 证明
         pis = []
         for i in range(1, n + 1):
             pi_i = prove_point_open(C_data, m, gamma_data, i, self.crs)
             pis.append(pi_i)
-        
-        # Aggregate with challenge weights
+
+        # 聚合证明
         pi_audit_zk = self.group.init(G1, 1)
         for pi_i, t_i in zip(pis, t_challenge_zk):
             pi_audit_zk *= pi_i ** t_i
-        
-        # Generate accumulator non-membership proof
+
+        # 生成累加器非成员证明
         sigma_bytes = vds_utils.serialize_signature(sigma)
         try:
             pi_non = self.accumulator.prove_non_membership(
@@ -289,7 +285,7 @@ class StorageServer:
             )
         except ValueError as e:
             if "in the blacklist" in str(e):
-                # Item is revoked, return a dummy proof that will fail verification
+                # 批次已撤销
                 w_dummy = self.group.init(G1, 1)
                 u_dummy = self.group.init(ZR, 0)
                 pi_non = (w_dummy, u_dummy)

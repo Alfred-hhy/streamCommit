@@ -222,7 +222,7 @@ class TestVDSSchemeC:
         
         # Step 2: Attacker creates mixed header
         mixed_header = {
-            "C_data": header_1["C_data"],   # From batch_1
+            "C_data_list": header_1["C_data_list"],   # From batch_1
             "C_time": header_2["C_time"],   # From batch_2
             "sigma": header_1["sigma"]      # From batch_1
         }
@@ -263,9 +263,10 @@ class TestVDSSchemeC:
         # Step 3: SS maliciously modifies the data
         m_tampered = m_original.copy()
         m_tampered[2] = group.init(ZR, 31)  # Change 30 to 31
-        
+
         # Manually modify SS's storage (simulating malicious SS)
-        ss.storage[batch_id][1]["m"] = m_tampered
+        # Note: m_original was converted to [[m_original]] in create_batch
+        ss.storage[batch_id][1]["m_matrix"] = [m_tampered]
         
         # Step 4: DC queries with t = [1,1,...,1]
         t_challenge = [group.init(ZR, 1) for _ in range(n)]
