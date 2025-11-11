@@ -15,8 +15,12 @@
 import time
 import json
 import sys
+import os
 from typing import Dict, List, Tuple
 import tracemalloc
+
+# 添加父目录到路径以导入 vc_smallness
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from vc_smallness import setup, keygen_crs
 from vc_smallness.commit import commit_G, commit_Ghat, commit_Cy, commit_V
@@ -26,6 +30,7 @@ from vc_smallness.proofs import (
 from vc_smallness.verify import verify_1, verify_5, verify_7, verify_9, verify_16
 from vc_smallness.fs_oracles import H_t, H_agg, H_s
 from charm.toolbox.pairinggroup import ZR
+from charm.core.engine.util import objectToBytes
 
 
 class PerformanceBenchmark:
@@ -297,15 +302,65 @@ class PerformanceBenchmark:
         """基准测试内存使用"""
         print("\n📊 内存使用性能测试")
         print("=" * 60)
-        
+
         results = {}
         for n in vector_sizes:
             print(f"  测试 n={n}...", end=" ", flush=True)
             mem, crs = self.measure_memory(keygen_crs, n, self.group)
             results[n] = mem
             print(f"✓ {mem:.2f} MB")
-        
+
         self.memory_results['crs'] = results
+        return results
+
+    def benchmark_bandwidth(self, vector_sizes: List[int]):
+        """
+        基准测试通信带宽/开销
+
+        通过序列化对象并测量字节大小来评估通信开销。
+        这展示了 VDS 系统的核心优势：证明大小为 O(1)，与数据量 N 无关。
+        """
+        print("\n📊 通信带宽/开销性能测试")
+        print("=" * 60)
+
+        results = {
+            'header_size': {},
+            'proof_size': {},
+            'raw_data_size': {}
+        }
+
+        for n in vector_sizes:
+            print(f"  测试 n={n}...", end=" ", flush=True)
+
+            # 生成 CRS
+            crs = keygen_crs(n, self.group)
+
+            # 生成随机数据向量 m (长度 N)
+            m = [self.group.random(ZR) for _ in range(n)]
+            gamma = self.group.random(ZR)
+
+            # Header 大小：生成承诺 C
+            C = commit_G(m, gamma, crs)
+            C_bytes = objectToBytes(C, self.group)
+            header_size = len(C_bytes)
+
+            # Proof 大小：生成聚合证明 π_agg
+            t = [self.group.random(ZR) for _ in range(n)]
+            pi_agg = prove_agg_open(C, m, gamma, list(range(1, n+1)), t, crs)
+            pi_bytes = objectToBytes(pi_agg, self.group)
+            proof_size = len(pi_bytes)
+
+            # Raw Data 大小（基准对比）：假设每个 ZR 元素约 32 字节
+            raw_data_size = n * 32
+
+            # 记录结果
+            results['header_size'][n] = header_size
+            results['proof_size'][n] = proof_size
+            results['raw_data_size'][n] = raw_data_size
+
+            print(f"✓ Header:{header_size}B Proof:{proof_size}B RawData:{raw_data_size}B")
+
+        self.results['bandwidth'] = results
         return results
     
     def run_all_benchmarks(self, vector_sizes: List[int] = None, num_runs: int = 10):
@@ -329,6 +384,7 @@ class PerformanceBenchmark:
         self.benchmark_proofs(vector_sizes, num_runs)
         self.benchmark_verification(vector_sizes, num_runs)
         self.benchmark_memory(vector_sizes)
+        self.benchmark_bandwidth(vector_sizes)
 
         print("\n" + "="*60)
         print("✅ 性能基准测试完成")
