@@ -104,7 +104,7 @@ class StorageServer:
     def store_batch(self, batch_id: str, public_header: Dict, secrets_for_ss: Dict):
         """
         Store a batch.
-        
+
         Parameters
         ----------
         batch_id : str
@@ -113,7 +113,7 @@ class StorageServer:
             Public information (C_data, C_time, sigma)
         secrets_for_ss : dict
             Secret information (m, t, gamma_data, gamma_time)
-        
+
         Notes
         -----
         SS stores both public and secret information.
@@ -121,6 +121,64 @@ class StorageServer:
         Secret info is used to compute the proofs.
         """
         self.storage[batch_id] = (public_header, secrets_for_ss)
+
+    def update_batch(self, old_batch_id: str, g_s_q_new: G1, sigma_bytes: bytes,
+                     new_batch_id: str, new_public_header: Dict, new_secrets_for_ss: Dict):
+        """
+        更新批次：删除旧批次，存储新批次，更新累加器状态（原子操作）。
+
+        这是一个便捷方法，封装了完整的批次更新流程。
+
+        Parameters
+        ----------
+        old_batch_id : str
+            旧批次的 ID（将被删除）
+        g_s_q_new : G1
+            新的服务器密钥（来自 DO）
+        sigma_bytes : bytes
+            被撤销的签名（序列化）
+        new_batch_id : str
+            新批次的 ID
+        new_public_header : dict
+            新批次的公开头部
+        new_secrets_for_ss : dict
+            新批次的秘密数据
+
+        Notes
+        -----
+        工作流程：
+        1. 添加新的服务器密钥（用于累加器证明）
+        2. 将旧签名加入黑名单
+        3. 删除旧批次数据（可选，节省存储空间）
+        4. 存储新批次数据
+
+        安全性：
+        - 旧批次的签名被加入黑名单，无法再生成有效证明
+        - 新批次使用新的签名，独立于旧批次
+
+        存储优化：
+        - 删除旧批次数据可以节省存储空间
+        - 如果需要保留历史记录，可以注释掉删除步骤
+
+        Example
+        -------
+        >>> # 配合 DO.update_batch 使用
+        >>> g_s_q, new_pk, sigma_bytes, new_id, new_header, new_secrets = \\
+        ...     do.update_batch(old_header, updated_data, updated_time)
+        >>> ss.update_batch(old_batch_id, g_s_q, sigma_bytes, new_id, new_header, new_secrets)
+        """
+        # 步骤 1: 更新累加器密钥
+        self.add_server_key(g_s_q_new)
+
+        # 步骤 2: 将旧签名加入黑名单
+        self.add_revoked_item(sigma_bytes)
+
+        # 步骤 3: 删除旧批次（可选，节省存储）
+        if old_batch_id in self.storage:
+            del self.storage[old_batch_id]
+
+        # 步骤 4: 存储新批次
+        self.store_batch(new_batch_id, new_public_header, new_secrets_for_ss)
     
     def generate_dc_data_proof(self, batch_id: str, t_challenge_vector: List[ZR],
                                f_current: G1, column_index: int = 0) -> Tuple[ZR, G1, Tuple]:

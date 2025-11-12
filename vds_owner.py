@@ -252,7 +252,80 @@ class DataOwner:
 
         # Return new server key, new global_pk, and sigma_bytes
         return g_s_q_new, self.global_pk, sigma_bytes
-    
+
+    def update_batch(self, old_batch_header: Dict, new_m_matrix: List[List[ZR]],
+                     new_t_vector: List[ZR]) -> Tuple[G1, Dict, bytes, str, Dict, Dict]:
+        """
+        更新批次：撤销旧批次并创建新批次（原子操作）。
+
+        这是一个便捷方法，封装了"撤销 + 创建"的完整流程。
+
+        Parameters
+        ----------
+        old_batch_header : dict
+            旧批次的公开头部（包含 sigma）
+        new_m_matrix : List[List[ZR]] 或 List[ZR]
+            新的数据矩阵（多列）或数据向量（单列）
+        new_t_vector : List[ZR]
+            新的时间向量
+
+        Returns
+        -------
+        g_s_q_new : G1
+            新的服务器密钥（用于累加器）
+        new_global_pk : dict
+            更新后的全局公钥
+        sigma_bytes : bytes
+            被撤销的签名（序列化）
+        new_batch_id : str
+            新批次的 ID
+        new_public_header : dict
+            新批次的公开头部
+        new_secrets_for_ss : dict
+            新批次的秘密数据
+
+        Notes
+        -----
+        工作流程：
+        1. 撤销旧批次（将其签名加入黑名单）
+        2. 创建新批次（包含更新后的数据）
+        3. 返回所有必要的信息供 SS 和 Verifier 更新
+
+        使用场景：
+        - 数据错误需要更正
+        - 数据过期需要刷新
+        - 数据内容需要修改
+
+        安全性：
+        - 旧批次立即失效，无法再通过验证
+        - 新批次使用新的签名，独立于旧批次
+        - 累加器确保旧批次不能被回滚
+
+        Example
+        -------
+        >>> # 更新批次
+        >>> g_s_q, new_pk, sigma_bytes, new_id, new_header, new_secrets = \\
+        ...     do.update_batch(old_header, updated_data, updated_time)
+        >>>
+        >>> # 更新 SS
+        >>> ss.update_batch(old_batch_id, g_s_q, sigma_bytes, new_id, new_header, new_secrets)
+        >>>
+        >>> # 更新 Verifier
+        >>> verifier.update_global_pk(new_pk)
+        """
+        # 步骤 1: 撤销旧批次
+        sigma_to_revoke = old_batch_header["sigma"]
+        g_s_q_new, new_global_pk, sigma_bytes = self.revoke_batch(sigma_to_revoke)
+
+        # 步骤 2: 创建新批次
+        new_batch_id, new_public_header, new_secrets_for_ss = self.create_batch(
+            new_m_matrix, new_t_vector
+        )
+
+        # 返回所有信息
+        return (g_s_q_new, new_global_pk, sigma_bytes,
+                new_batch_id, new_public_header, new_secrets_for_ss)
+
     def get_initial_server_keys(self) -> Tuple:
         """
         Get the initial server keys for SS.
