@@ -1,0 +1,78 @@
+version: '3.8'
+
+services:
+  do-server:
+    build: .
+    container_name: vds-do-server
+    command: python3 -m distributed.do_server
+    ports:
+      - "5001:5001"
+    environment:
+      - DO_HOST=0.0.0.0
+      - DO_PORT=5001
+      - SS_HOST=ss-server
+      - SS_PORT=5002
+      - VERIFIER_HOST=verifier-server
+      - VERIFIER_PORT=5003
+      - DEV_MODE=true
+    networks:
+      - vds-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ss-server:
+    build: .
+    container_name: vds-ss-server
+    command: python3 -m distributed.ss_server
+    ports:
+      - "5002:5002"
+    environment:
+      - SS_HOST=0.0.0.0
+      - SS_PORT=5002
+      - DO_HOST=do-server
+      - DO_PORT=5001
+      - VERIFIER_HOST=verifier-server
+      - VERIFIER_PORT=5003
+      - DEV_MODE=true
+    networks:
+      - vds-network
+    depends_on:
+      do-server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5002/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  verifier-server:
+    build: .
+    container_name: vds-verifier-server
+    command: python3 -m distributed.verifier_server
+    ports:
+      - "5003:5003"
+    environment:
+      - VERIFIER_HOST=0.0.0.0
+      - VERIFIER_PORT=5003
+      - DO_HOST=do-server
+      - DO_PORT=5001
+      - SS_HOST=ss-server
+      - SS_PORT=5002
+      - DEV_MODE=true
+    networks:
+      - vds-network
+    depends_on:
+      ss-server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5003/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  vds-network:
+    driver: bridge

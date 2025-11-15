@@ -1,0 +1,73 @@
+# 测试Dockerfile：验证charm-crypto能否在Docker中成功安装
+# 基于用户提供的安装教程
+
+FROM ubuntu:22.04
+
+# 避免交互式提示
+ENV DEBIAN_FRONTEND=noninteractive
+
+# 第1步：安装所有基础依赖和编译工具
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    git \
+    curl \
+    wget \
+    flex \
+    bison \
+    libgmp-dev \
+    libssl-dev \
+    zlib1g-dev \
+    libbz2-dev \
+    libreadline-dev \
+    libsqlite3-dev \
+    libncursesw5-dev \
+    xz-utils \
+    tk-dev \
+    libxml2-dev \
+    libxmlsec1-dev \
+    libffi-dev \
+    liblzma-dev \
+    python3 \
+    python3-pip \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# 第2步：手动编译和安装libpbc库
+WORKDIR /build
+RUN echo "=== 下载PBC源码 ===" && \
+    wget https://crypto.stanford.edu/pbc/files/pbc-0.5.14.tar.gz && \
+    echo "=== 解压PBC ===" && \
+    tar -zxvf pbc-0.5.14.tar.gz && \
+    cd pbc-0.5.14 && \
+    echo "=== 配置PBC ===" && \
+    ./configure && \
+    echo "=== 编译PBC ===" && \
+    make && \
+    echo "=== 安装PBC ===" && \
+    make install && \
+    echo "=== 刷新库缓存 ===" && \
+    ldconfig && \
+    echo "=== PBC安装完成 ==="
+
+# 第3步：从源码安装charm-crypto
+WORKDIR /charm-build
+RUN echo "=== 克隆charm源码 ===" && \
+    git clone https://github.com/JHUISI/charm.git && \
+    cd charm && \
+    echo "=== 运行configure脚本 ===" && \
+    ./configure.sh && \
+    echo "=== 安装charm-crypto ===" && \
+    python3 setup.py install && \
+    echo "=== charm-crypto安装完成 ==="
+
+# 第4步：验证安装
+RUN echo "=== 验证charm-crypto安装 ===" && \
+    python3 -c "from charm.toolbox.pairinggroup import PairingGroup; group = PairingGroup('MNT224'); print('✅ Charm-crypto安装成功！')" && \
+    echo "=== 所有验证通过 ==="
+
+# 清理构建文件以减小镜像大小
+RUN rm -rf /build /charm-build
+
+WORKDIR /app
+
+CMD ["/bin/bash"]

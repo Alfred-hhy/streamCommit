@@ -1,0 +1,51 @@
+version: '3.8'
+
+# VDS 多机部署 - 机器2 (SS Server)
+# IP: 192.168.1.20
+#
+# 使用方法:
+#   1. 根据你的实际 IP 修改下面的 DO_HOST 和 VERIFIER_HOST
+#   2. docker build -t vds-app:latest .
+#   3. docker-compose up -d
+
+services:
+  ss-server:
+    build: .
+    container_name: vds-ss-server
+    command: python3 -m distributed.ss_server
+    ports:
+      # 格式: 0.0.0.0:主机端口:容器端口
+      # 0.0.0.0 表示在所有网卡上暴露端口，这样其他机器可以访问
+      - "0.0.0.0:5002:5002"
+    environment:
+      # 本机配置
+      - SS_HOST=0.0.0.0          # 监听所有网卡
+      - SS_PORT=5002              # 监听端口 5002
+
+      # 其他服务的地址 - 改为你的实际 IP！
+      - DO_HOST=192.168.1.10      # DO Server 的机器 IP
+      - DO_PORT=5001              # DO Server 的端口
+      - VERIFIER_HOST=192.168.1.30 # Verifier Server 的机器 IP
+      - VERIFIER_PORT=5003        # Verifier Server 的端口
+
+      # VDS 参数
+      - VECTOR_DIM=16             # 向量维度
+      - PAIRING_CURVE=MNT224      # 配对曲线
+
+      # 开发模式 - 生产环境改为 false
+      - DEV_MODE=true
+
+    # 容器重启策略
+    restart: unless-stopped
+
+    # 日志配置
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# 网络配置
+networks:
+  default:
+    name: vds-network
