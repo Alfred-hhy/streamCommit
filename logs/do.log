@@ -1,0 +1,20 @@
+Starting DO server on localhost:5001
+ * Serving Flask app 'do_server'
+ * Debug mode: off
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://localhost:5001
+[33mPress CTRL+C to quit[0m
+⚠️  WARNING: Running in DEVELOPMENT MODE - alpha will be shared (INSECURE!)
+⚠️  Set DEV_MODE=false for production use
+DO CRS g_list[1]: [4746447366532599913184267994640303932251735298492670779117360238095, 13761708271590491339721654146541386693656090679525199064897100305228]
+127.0.0.1 - - [13/Nov/2025 14:53:04] "POST /init HTTP/1.1" 200 -
+127.0.0.1 - - [13/Nov/2025 14:53:04] "POST /create_batch HTTP/1.1" 200 -
+⚠️  WARNING: Running in DEVELOPMENT MODE - alpha will be shared (INSECURE!)
+⚠️  Set DEV_MODE=false for production use
+DO CRS g_list[1]: [12790910313559991507611716756244914709665704625040298340353624234140, 381864354835977288681727092250710813150577723921007738981282427217]
+127.0.0.1 - - [13/Nov/2025 14:53:18] "POST /init HTTP/1.1" 200 -
+127.0.0.1 - - [13/Nov/2025 14:53:19] "POST /create_batch HTTP/1.1" 200 -
+127.0.0.1 - - [13/Nov/2025 14:53:19] "POST /create_batch HTTP/1.1" 200 -
+127.0.0.1 - - [13/Nov/2025 14:53:19] "POST /create_batch HTTP/1.1" 200 -
+127.0.0.1 - - [13/Nov/2025 14:53:20] "POST /create_batch HTTP/1.1" 200 -
+127.0.0.1 - - [13/Nov/2025 14:53:20] "POST /revoke_batch HTTP/1.1" 200 -
